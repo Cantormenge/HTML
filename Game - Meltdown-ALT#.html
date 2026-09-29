@@ -1,0 +1,1110 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Meltdown</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <style>
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: #020617; }
+        
+        input[type="file"]::file-selector-button {
+            background-color: #84cc16;
+            color: black;
+            border: none;
+            padding: 10px 20px;
+            font-weight: 900;
+            cursor: pointer;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin-right: 20px;
+            font-family: monospace;
+        }
+        input[type="file"]::file-selector-button:hover {
+            background-color: #a3e635;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel" data-type="module">
+        import React, { useState, useEffect, useRef } from 'https://esm.sh/react@18?dev';
+        import ReactDOM from 'https://esm.sh/react-dom@18/client?dev';
+        import { 
+            Skull, Zap, Volume2, VolumeX, Trophy, ArrowLeft, CheckCircle, XCircle, 
+            Brain, Calculator, Ruler, Hash, Percent, AlertTriangle, Layers, FastForward, 
+            Bomb, Star, Frown, Sword, Shield, Biohazard, Heart, Upload, FileText, Mic
+        } from 'https://esm.sh/lucide-react@0.292.0?dev';
+
+        // --- DATEN-STRUKTUREN ---
+        
+        let QUESTIONS_R1 = { KA: [[],[],[],[],[]], KB: [[],[],[],[],[]], KC: [[],[],[],[],[]], KD: [[],[],[],[],[]], KE: [[],[],[],[],[]] };
+        let QUESTIONS_R2 = { KF: [[],[],[],[],[]], KG: [[],[],[],[],[]], KH: [[],[],[],[],[]], KI: [[],[],[],[],[]], KJ: [[],[],[],[],[]] };
+        let BOSS_QUESTIONS = [];
+
+        let CATEGORIES_R1 = [
+          { id: 'KA', name: 'Kategorie A' }, { id: 'KB', name: 'Kategorie B' },
+          { id: 'KC', name: 'Kategorie C' }, { id: 'KD', name: 'Kategorie D' }, { id: 'KE', name: 'Kategorie E' },
+        ];
+
+        let CATEGORIES_R2 = [
+          { id: 'KF', name: 'Kategorie F' }, { id: 'KG', name: 'Kategorie G' },
+          { id: 'KH', name: 'Kategorie H' }, { id: 'KI', name: 'Kategorie I' }, { id: 'KJ', name: 'Kategorie J' },
+        ];
+
+        // MAPPING ID ZU ICON
+        const ICON_MAP = {
+            KA: <Hash className="w-6 h-6" />, KB: <Ruler className="w-6 h-6" />, KC: <Calculator className="w-6 h-6" />, KD: <Percent className="w-6 h-6" />, KE: <Brain className="w-6 h-6" />,
+            KF: <Brain className="w-6 h-6" />, KG: <Ruler className="w-6 h-6" />, KH: <Percent className="w-6 h-6" />, KI: <Zap className="w-6 h-6" />, KJ: <Skull className="w-6 h-6" />
+        };
+
+        const parseQuestionsFile = (text) => {
+            QUESTIONS_R1 = { KA: [[],[],[],[],[]], KB: [[],[],[],[],[]], KC: [[],[],[],[],[]], KD: [[],[],[],[],[]], KE: [[],[],[],[],[]] };
+            QUESTIONS_R2 = { KF: [[],[],[],[],[]], KG: [[],[],[],[],[]], KH: [[],[],[],[],[]], KI: [[],[],[],[],[]], KJ: [[],[],[],[],[]] };
+            BOSS_QUESTIONS = [];
+            
+            CATEGORIES_R1 = [{ id: 'KA', name: 'Kategorie A' }, { id: 'KB', name: 'Kategorie B' }, { id: 'KC', name: 'Kategorie C' }, { id: 'KD', name: 'Kategorie D' }, { id: 'KE', name: 'Kategorie E' }];
+            CATEGORIES_R2 = [{ id: 'KF', name: 'Kategorie F' }, { id: 'KG', name: 'Kategorie G' }, { id: 'KH', name: 'Kategorie H' }, { id: 'KI', name: 'Kategorie I' }, { id: 'KJ', name: 'Kategorie J' }];
+
+            const lines = text.split(/\r?\n/);
+            let currentTag = null;
+            const regexQ = /^\[(R1|R2):(\w+):(\d+)\]$/;   
+            const regexBoss = /^\[BOSS\]$/;               
+            const regexCat = /^\[CAT:(R1|R2):(\w+)\](.*)$/; 
+
+            lines.forEach(line => {
+                const cleanLine = line.trim();
+                if (!cleanLine || cleanLine.startsWith('//')) return; 
+
+                const matchCat = cleanLine.match(regexCat);
+                if (matchCat) {
+                    const round = matchCat[1];
+                    const id = matchCat[2];
+                    const newName = matchCat[3].trim();
+                    if (round === 'R1') { const cat = CATEGORIES_R1.find(c => c.id === id); if (cat) cat.name = newName; } 
+                    else { const cat = CATEGORIES_R2.find(c => c.id === id); if (cat) cat.name = newName; }
+                    return;
+                }
+
+                const matchQ = cleanLine.match(regexQ);
+                if (matchQ) { currentTag = { type: matchQ[1], cat: matchQ[2], pts: parseInt(matchQ[3]) }; return; }
+                if (regexBoss.test(cleanLine)) { currentTag = { type: 'BOSS' }; return; }
+
+                if (currentTag && cleanLine.includes('|')) {
+                    const parts = cleanLine.split('|');
+                    const q = parts[0].trim();
+                    const a = parts.slice(1).join('|').trim(); 
+                    
+                    if (currentTag.type === 'BOSS') { BOSS_QUESTIONS.push({ q, a }); } 
+                    else {
+                        const idx = (currentTag.pts / 100) - 1;
+                        if (idx >= 0 && idx <= 4) {
+                            if (currentTag.type === 'R1' && QUESTIONS_R1[currentTag.cat]) QUESTIONS_R1[currentTag.cat][idx].push({ q, a });
+                            else if (currentTag.type === 'R2' && QUESTIONS_R2[currentTag.cat]) QUESTIONS_R2[currentTag.cat][idx].push({ q, a });
+                        }
+                    }
+                }
+            });
+            return true;
+        };
+
+        const generateRandomEvents = () => {
+          const allCoords = [];
+          for(let c=0; c<5; c++) { for(let r=0; r<5; r++) { allCoords.push(`${c}-${r}`); } }
+          for (let i = allCoords.length - 1; i > 0; i--) {
+              const j = Math.floor(Math.random() * (i + 1));
+              [allCoords[i], allCoords[j]] = [allCoords[j], allCoords[i]];
+          }
+          return { bonus: allCoords.slice(0, 5), trap: allCoords.slice(5, 7), lucky: allCoords.slice(7, 9), double: allCoords.slice(9, 10) };
+        };
+
+        // --- AUDIO ENGINE (QUIET VERSION) ---
+        class AudioEngine {
+          constructor() { this.ctx = null; this.isPlaying = false; this.sequencerInterval = null; this.sirenInterval = null; }
+          init() { if (!this.ctx) { this.ctx = new (window.AudioContext || window.webkitAudioContext)(); } }
+          playTone(freq, type, duration, vol = 0.1, startTime = 0) {
+            if (!this.ctx) return;
+            const osc = this.ctx.createOscillator(); const gain = this.ctx.createGain();
+            osc.type = type; osc.frequency.setValueAtTime(freq, this.ctx.currentTime + startTime);
+            gain.gain.setValueAtTime(vol, this.ctx.currentTime + startTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + startTime + duration);
+            osc.connect(gain); gain.connect(this.ctx.destination);
+            osc.start(this.ctx.currentTime + startTime); osc.stop(this.ctx.currentTime + startTime + duration);
+          }
+          playNoise(duration) {
+            if (!this.ctx) return;
+            const bufferSize = this.ctx.sampleRate * duration; const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+            const data = buffer.getChannelData(0); for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+            const noise = this.ctx.createBufferSource(); noise.buffer = buffer;
+            const gain = this.ctx.createGain(); gain.gain.setValueAtTime(0.1, this.ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + duration);
+            noise.connect(gain); gain.connect(this.ctx.destination); noise.start();
+          }
+          playWhoosh() {
+            if (!this.ctx) return;
+            const osc = this.ctx.createOscillator(); const gain = this.ctx.createGain(); const filter = this.ctx.createBiquadFilter();
+            const bufferSize = this.ctx.sampleRate * 0.5; const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+            const data = buffer.getChannelData(0); for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+            const noise = this.ctx.createBufferSource(); noise.buffer = buffer;
+            filter.type = 'lowpass'; filter.frequency.setValueAtTime(200, this.ctx.currentTime);
+            filter.frequency.exponentialRampToValueAtTime(3000, this.ctx.currentTime + 0.2); filter.frequency.exponentialRampToValueAtTime(200, this.ctx.currentTime + 0.5);
+            gain.gain.setValueAtTime(0, this.ctx.currentTime); gain.gain.linearRampToValueAtTime(0.3, this.ctx.currentTime + 0.1); gain.gain.linearRampToValueAtTime(0, this.ctx.currentTime + 0.5);
+            noise.connect(filter); filter.connect(gain); gain.connect(this.ctx.destination); noise.start();
+          }
+          playImpact() {
+            if (!this.ctx) return;
+            const osc = this.ctx.createOscillator(); const gain = this.ctx.createGain();
+            osc.frequency.setValueAtTime(150, this.ctx.currentTime); osc.frequency.exponentialRampToValueAtTime(40, this.ctx.currentTime + 0.5);
+            gain.gain.setValueAtTime(0.5, this.ctx.currentTime); gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.5);
+            osc.connect(gain); gain.connect(this.ctx.destination); osc.start(); osc.stop(this.ctx.currentTime + 0.5);
+          }
+          playElevatorMusic() {
+            if (this.isPlaying || !this.ctx) return; this.isPlaying = true; let step = 0;
+            const chord1 = [261.63, 329.63, 392.00, 493.88]; const chord2 = [293.66, 349.23, 440.00, 523.25]; const bass = [130.81, 146.83];
+            this.sequencerInterval = setInterval(() => {
+                if (this.ctx.state === 'suspended') this.ctx.resume();
+                const barStep = step % 16; const currentChord = step % 32 < 16 ? chord1 : chord2; const currentBass = step % 32 < 16 ? bass[0] : bass[1];
+                if (barStep === 0 || barStep === 10) this.playTone(currentBass, 'sine', 0.5, 0.2);
+                if (barStep % 4 === 0) { const noteIdx = (barStep / 4) % 4; this.playTone(currentChord[noteIdx], 'triangle', 0.4, 0.05); }
+                if (barStep % 2 === 0) this.playNoise(0.02); step++;
+            }, 200); 
+          }
+          playAlarmSequence() {
+             if (!this.ctx) return; this.isPlaying = true;
+             this.sirenInterval = setInterval(() => {
+                 const now = this.ctx.currentTime; const osc = this.ctx.createOscillator(); const gain = this.ctx.createGain();
+                 osc.type = 'sawtooth'; const freq = (Date.now() % 400 < 200) ? 800 : 600;
+                 osc.frequency.setValueAtTime(freq, now); gain.gain.setValueAtTime(0.1, now);
+                 gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+                 osc.connect(gain); gain.connect(this.ctx.destination); osc.start(now); osc.stop(now + 0.1);
+             }, 150); 
+          }
+          playSiren() {
+            if (!this.ctx) return; const osc = this.ctx.createOscillator(); const gain = this.ctx.createGain();
+            osc.type = 'sawtooth'; osc.frequency.setValueAtTime(400, this.ctx.currentTime);
+            osc.frequency.linearRampToValueAtTime(900, this.ctx.currentTime + 0.3); osc.frequency.linearRampToValueAtTime(400, this.ctx.currentTime + 0.6);
+            gain.gain.setValueAtTime(0.08, this.ctx.currentTime); gain.gain.linearRampToValueAtTime(0.08, this.ctx.currentTime + 0.6);
+            osc.connect(gain); gain.connect(this.ctx.destination); osc.start(); osc.stop(this.ctx.currentTime + 0.6);
+          }
+          startSirenLoop() { this.playSiren(); this.sirenInterval = setInterval(() => this.playSiren(), 600); }
+          stopSirenLoop() { if (this.sirenInterval) clearInterval(this.sirenInterval); }
+          playFailSound() {
+            if (!this.ctx) return;
+            const osc1 = this.ctx.createOscillator(); const osc2 = this.ctx.createOscillator(); const gain = this.ctx.createGain();
+            osc1.type = 'sawtooth'; osc2.type = 'square';
+            osc1.frequency.setValueAtTime(300, this.ctx.currentTime); osc2.frequency.setValueAtTime(315, this.ctx.currentTime); 
+            osc1.frequency.exponentialRampToValueAtTime(50, this.ctx.currentTime + 1.5); osc2.frequency.exponentialRampToValueAtTime(55, this.ctx.currentTime + 1.5);
+            gain.gain.setValueAtTime(0.15, this.ctx.currentTime); gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 1.5);
+            osc1.connect(gain); osc2.connect(gain); gain.connect(this.ctx.destination);
+            osc1.start(); osc2.start(); osc1.stop(this.ctx.currentTime + 1.5); osc2.stop(this.ctx.currentTime + 1.5);
+          }
+          playJackpotSound() {
+            if (!this.ctx) return;
+            const notes = [261.63, 329.63, 392.00, 523.25, 659.25, 783.99, 1046.50]; const now = this.ctx.currentTime;
+            notes.forEach((freq, i) => {
+                const osc = this.ctx.createOscillator(); const gain = this.ctx.createGain();
+                osc.type = 'square'; osc.frequency.setValueAtTime(freq, now + i * 0.08);
+                gain.gain.setValueAtTime(0.05, now + i * 0.08); gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.08 + 0.3);
+                osc.connect(gain); gain.connect(this.ctx.destination); osc.start(now + i * 0.08); osc.stop(now + i * 0.08 + 0.3);
+            });
+            setTimeout(() => { this.playTone(1046.50, 'sine', 1.0, 0.3); }, notes.length * 80);
+          }
+          playDoubleTroubleSound() {
+            if (!this.ctx) return; const now = this.ctx.currentTime; const osc = this.ctx.createOscillator(); const gain = this.ctx.createGain();
+            osc.type = 'sawtooth'; osc.frequency.setValueAtTime(200, now);
+            osc.frequency.linearRampToValueAtTime(800, now + 0.5); osc.frequency.linearRampToValueAtTime(200, now + 1.0);
+            osc.frequency.linearRampToValueAtTime(800, now + 1.5); osc.frequency.linearRampToValueAtTime(1200, now + 2.0);
+            gain.gain.setValueAtTime(0.1, now); gain.gain.linearRampToValueAtTime(0, now + 2.0);
+            osc.connect(gain); gain.connect(this.ctx.destination); osc.start(now); osc.stop(now + 2.0);
+          }
+          playMusic() {
+            if (this.isPlaying || !this.ctx) return; this.isPlaying = true; let step = 0;
+            const melody = [329.63, 0, 329.63, 392.00, 440.00, 0, 392.00, 329.63, 293.66, 0, 293.66, 392.00, 369.99, 0, 293.66, 0, 329.63, 0, 329.63, 392.00, 440.00, 493.88, 523.25, 587.33, 523.25, 0, 493.88, 0, 440.00, 392.00, 440.00, 493.88];
+            this.sequencerInterval = setInterval(() => {
+              if (this.ctx.state === 'suspended') this.ctx.resume();
+              const currentStep = step % 32; const melodyNote = melody[currentStep % 32];
+              if (melodyNote > 0) this.playTone(melodyNote, 'square', 0.1, 0.08);
+              if (currentStep % 4 === 0) this.playTone(60, 'sine', 0.05, 0.3); 
+              if (currentStep % 4 === 2) this.playNoise(0.03); step++;
+            }, 130);
+          }
+          playFunkMusic() {
+            if (this.isPlaying || !this.ctx) return; this.isPlaying = true; let step = 0;
+            const bassSequence = [98.00, 0, 196.00, 0, 98.00, 116.54, 130.81, 0, 130.81, 0, 261.63, 0, 116.54, 98.00, 0, 0];
+            const melodySequence = [0, 0, 783.99, 0, 0, 783.99, 0, 0, 0, 0, 932.33, 0, 0, 0, 1046.50, 0];
+            this.sequencerInterval = setInterval(() => {
+                if (this.ctx.state === 'suspended') this.ctx.resume();
+                const currentStep = step % 16; const bassNote = bassSequence[currentStep];
+                if (bassNote > 0) this.playTone(bassNote, 'sawtooth', 0.15, 0.2);
+                const melodyNote = melodySequence[currentStep]; if (melodyNote > 0) this.playTone(melodyNote, 'square', 0.1, 0.1);
+                if (currentStep % 4 === 0) this.playTone(60, 'sine', 0.05, 0.4); 
+                if (currentStep % 4 === 2) this.playNoise(0.05); 
+                if (currentStep % 2 === 0) this.playNoise(0.01); step++;
+            }, 120); 
+          }
+          playEpicVictoryMusic() {
+            if (this.isPlaying || !this.ctx) return; this.isPlaying = true; let step = 0;
+            const chordC = [261.63, 329.63, 392.00]; const chordF = [349.23, 440.00, 523.25]; const chordG = [392.00, 493.88, 587.33];
+            this.sequencerInterval = setInterval(() => {
+               if (this.ctx.state === 'suspended') this.ctx.resume();
+               const bar = Math.floor(step / 16) % 4; const beat = step % 16; let currentChord = chordC;
+               if (bar === 1) currentChord = chordF; if (bar === 2) currentChord = chordG;
+               if (beat % 2 === 0) { const note = currentChord[(beat / 2) % 3]; this.playTone(note, 'triangle', 0.4, 0.1); this.playTone(note / 2, 'sine', 0.4, 0.1); }
+               step++;
+            }, 100);
+          }
+          playBossTheme() {
+            if (this.isPlaying || !this.ctx) return; this.isPlaying = true; let step = 0;
+            this.sequencerInterval = setInterval(() => {
+                if (this.ctx.state === 'suspended') this.ctx.resume();
+                const beat = step % 8; this.playTone(82.41, 'sawtooth', 0.1, 0.2); 
+                if (beat === 0 || beat === 4) this.playTone(41.20, 'square', 0.1, 0.3); 
+                if (beat === 2 || beat === 6) this.playNoise(0.1); 
+                if (Math.random() > 0.7) this.playTone(800 + Math.random() * 400, 'square', 0.05, 0.1);
+                step++;
+            }, 100);
+          }
+          playBossScream() {
+              if (!this.ctx) return; const osc = this.ctx.createOscillator(); const gain = this.ctx.createGain();
+              osc.type = 'sawtooth'; osc.frequency.setValueAtTime(200, this.ctx.currentTime);
+              osc.frequency.linearRampToValueAtTime(50, this.ctx.currentTime + 1.0);
+              gain.gain.setValueAtTime(0.5, this.ctx.currentTime); gain.gain.linearRampToValueAtTime(0, this.ctx.currentTime + 1.0);
+              osc.connect(gain); gain.connect(this.ctx.destination); osc.start(); osc.stop(this.ctx.currentTime + 1.0);
+          }
+          playSwordSound() { this.playNoise(0.1); this.playTone(600, 'triangle', 0.1, 0.1); }
+          playPlayerHit() { this.playTone(100, 'sawtooth', 0.2, 0.3); this.playTone(80, 'square', 0.2, 0.3); }
+          stopMusic() { if (this.sequencerInterval) clearInterval(this.sequencerInterval); if (this.sirenInterval) clearInterval(this.sirenInterval); this.isPlaying = false; }
+          playExplosion() { 
+              this.playNoise(0.15); 
+              this.playTone(60, 'sawtooth', 0.4, 0.15); 
+              this.playTone(40, 'square', 0.4, 0.15); 
+          }
+          playCorrect() { this.playTone(523.25, 'square', 0.1, 0.1); setTimeout(() => this.playTone(659.25, 'square', 0.1, 0.1), 80); setTimeout(() => this.playTone(783.99, 'square', 0.4, 0.1), 160); }
+          playWrong() { this.playTone(150, 'sawtooth', 0.3, 0.2); setTimeout(() => this.playTone(100, 'sawtooth', 0.3, 0.2), 150); }
+        }
+
+        const audio = new AudioEngine();
+
+        // --- COMPONENTS ---
+
+        function Meltdown() { 
+          const [gameState, setGameState] = useState('LOAD_FILE'); 
+          const [round, setRound] = useState(1);
+          const [scores, setScores] = useState({ t1: 0, t2: 0 });
+          const [completed, setCompleted] = useState([]); 
+          const [currentQ, setCurrentQ] = useState(null); 
+          const [revealed, setRevealed] = useState(false);
+          const [musicOn, setMusicOn] = useState(false);
+          const [speaking, setSpeaking] = useState(false);
+          const [isMeltdown, setIsMeltdown] = useState(false);
+          const [doubleTroubleActive, setDoubleTroubleActive] = useState(false);
+          const [bossPhase, setBossPhase] = useState('none'); 
+          const [isBossHit, setIsBossHit] = useState(false);
+          const [activeSpecialEvents, setActiveSpecialEvents] = useState({ bonus: [], trap: [], lucky: [], double: [] });
+
+          const [introData, setIntroData] = useState({ active: false, phase: 'init', catIndex: 0 });
+          const [gridFlyIn, setGridFlyIn] = useState(false);
+
+          const getInitialSpeed = () => {
+             const userAgent = window.navigator.userAgent || window.navigator.vendor || window.opera;
+             if (/iPad|iPhone|iPod/.test(userAgent) && !window.MSStream) return 'slow';
+             if (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) return 'slow';
+             return 'normal';
+          };
+
+          const [ttsSpeedMode, setTtsSpeedMode] = useState(getInitialSpeed()); 
+          const [fileError, setFileError] = useState('');
+
+          const [bossBattle, setBossBattle] = useState({
+              active: false, bossHP: 0, playerHP: 0, bossMaxHP: 0, playerMaxHP: 0, qIndex: 0, turn: 'player', phase: 'intro', currentDamage: 500 
+          });
+
+          const activeCategories = round === 1 ? (CATEGORIES_R1 || []) : (CATEGORIES_R2 || []);
+          const activeQuestions = round === 1 ? QUESTIONS_R1 : QUESTIONS_R2;
+
+          const winner = scores.t1 > scores.t2 ? 't1' : (scores.t2 > scores.t1 ? 't2' : 'draw');
+
+          const handleFileUpload = (event) => {
+              const file = event.target.files[0];
+              if (!file) return;
+              const reader = new FileReader();
+              reader.onload = (e) => {
+                  try {
+                      const success = parseQuestionsFile(e.target.result);
+                      if (success) setGameState('INTRO');
+                  } catch (err) {
+                      setFileError('Fehler beim Lesen der Datei! Falsches Format?'); console.error(err);
+                  }
+              };
+              reader.readAsText(file);
+          };
+
+          const startGame = () => {
+            audio.init(); 
+            setMusicOn(true);
+            setActiveSpecialEvents(generateRandomEvents()); 
+            startRoundIntroSequence();
+          };
+
+          const startRoundIntroSequence = () => {
+              setGameState('ROUND_INTRO');
+              setIntroData({ active: true, phase: 'fade_in', catIndex: 0 });
+          };
+
+          useEffect(() => {
+            if (gameState !== 'ROUND_INTRO') return;
+
+            let timeout;
+            if (introData.phase === 'fade_in') {
+                timeout = setTimeout(() => {
+                    setIntroData(prev => ({ ...prev, phase: 'round_title' }));
+                }, 1000);
+            } else if (introData.phase === 'round_title') {
+                 audio.playImpact();
+                 speakText(`Runde ${round}`);
+                 timeout = setTimeout(() => {
+                     setIntroData(prev => ({ ...prev, phase: 'categories', catIndex: 0 }));
+                 }, 2000);
+            } else if (introData.phase === 'categories') {
+                if (introData.catIndex < 5) {
+                     const currentCat = activeCategories[introData.catIndex];
+                     if (currentCat && currentCat.name) {
+                         audio.playWhoosh();
+                     }
+                     timeout = setTimeout(() => {
+                         setIntroData(prev => ({ ...prev, catIndex: prev.catIndex + 1 }));
+                     }, 1000); 
+                } else {
+                     setIntroData(prev => ({ ...prev, phase: 'fade_out' }));
+                }
+            } else if (introData.phase === 'fade_out') {
+                 timeout = setTimeout(() => {
+                     setGameState('GRID');
+                     setGridFlyIn(true);
+                     setTimeout(() => setGridFlyIn(false), 1000);
+                     if (round === 1) audio.playMusic(); else audio.playFunkMusic();
+                 }, 100); 
+            }
+            return () => clearTimeout(timeout);
+          }, [gameState, introData, round]);
+
+          const toggleMusic = () => {
+            if (musicOn) { audio.stopMusic(); } else {
+              if (gameState === 'GAMEOVER') audio.playEpicVictoryMusic();
+              else if (gameState === 'BOSS_BATTLE') audio.playBossTheme();
+              else if (round === 1 && gameState === 'GRID') audio.playMusic();
+              else if (round === 2 && gameState === 'GRID') audio.playFunkMusic();
+            }
+            setMusicOn(!musicOn);
+          };
+
+          const speakText = (text) => {
+            if (!window.speechSynthesis) return; window.speechSynthesis.cancel();
+            const utter = new SpeechSynthesisUtterance(text);
+            let rate = 1.2 + Math.random() * 0.05; 
+            if (ttsSpeedMode === 'slow') rate = rate * 0.9; 
+            utter.rate = rate;
+            const voices = window.speechSynthesis.getVoices();
+            const deVoices = voices.filter(v => v.lang.includes('de'));
+            if (deVoices.length > 0) utter.voice = deVoices[Math.floor(Math.random() * deVoices.length)];
+            utter.onstart = () => setSpeaking(true); utter.onend = () => setSpeaking(false);
+            window.speechSynthesis.speak(utter);
+          };
+
+          const debugFillRound = () => {
+              const allIds = []; for(let c=0; c<5; c++) { for(let r=0; r<5; r++) { allIds.push(`${c}-${r}`); } }
+              allIds.pop(); setCompleted(allIds); setScores({ t1: 1500, t2: 1200 });
+          };
+
+          const triggerRound2Warning = () => {
+            audio.stopMusic(); setGameState('ROUND_TRANSITION_WARNING'); audio.playAlarmSequence(); 
+            setTimeout(() => { audio.stopSirenLoop(); startRound2(); }, 4500); 
+          };
+
+          const startRound2 = () => {
+              setRound(2); setCompleted([]); setDoubleTroubleActive(false); 
+              setActiveSpecialEvents(generateRandomEvents()); 
+              audio.stopMusic(); 
+              startRoundIntroSequence();
+          };
+
+          const triggerTrueFinale = () => {
+              if (winner === 'draw') { resetGame(); return; }
+
+              // CLEAR ALL RELEVANT STATES
+              setIntroData({ active: false, phase: 'init', catIndex: 0 });
+              setGridFlyIn(false);
+              setRevealed(false);
+              setCurrentQ(null);
+
+              if (BOSS_QUESTIONS.length > 0) {
+                 for (let i = BOSS_QUESTIONS.length - 1; i > 0; i--) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [BOSS_QUESTIONS[i], BOSS_QUESTIONS[j]] = [BOSS_QUESTIONS[j], BOSS_QUESTIONS[i]];
+                 }
+              }
+
+              audio.stopMusic(); setGameState('TRUE_FINALE_INTRO'); setBossPhase('black_in'); 
+              const pHP = Math.max(2000, (winner === 't1' ? scores.t1 : scores.t2));
+              const bHP = Math.max(2000, (winner === 't1' ? scores.t2 : scores.t1));
+              setBossBattle({ active: true, bossHP: bHP, playerHP: pHP, bossMaxHP: bHP, playerMaxHP: pHP, qIndex: 0, turn: 'player', phase: 'intro', currentDamage: 500 });
+              setTimeout(() => setBossPhase('reveal'), 500); setTimeout(() => setBossPhase('text_in'), 2500);
+              setTimeout(() => { setBossPhase('mutate_and_fade'); audio.playBossScream(); audio.playBossTheme(); }, 5000);
+              
+              // FALLBACK TIMER falls onAnimationEnd nicht feuert
+              setTimeout(() => { 
+                  if (gameState !== 'BOSS_BATTLE') {
+                      setGameState('BOSS_BATTLE'); setBossBattle(prev => ({...prev, phase: 'start_screen'})); setRevealed(false);
+                  }
+              }, 14000);
+          };
+
+          const onMutationEnd = () => {
+              if (bossPhase === 'mutate_and_fade') {
+                  setGameState('BOSS_BATTLE'); setBossBattle(prev => ({...prev, phase: 'start_screen'})); setRevealed(false);
+              }
+          };
+
+          const startBossAction = () => {
+             setBossBattle(prev => ({...prev, phase: 'fight'}));
+             const firstQ = BOSS_QUESTIONS[0] ? BOSS_QUESTIONS[0].q : "Fehler: Keine Bossfrage";
+             speakText(firstQ);
+          };
+
+          const handleBossAnswer = (correct) => {
+              const dmg = bossBattle.currentDamage; 
+              if (correct) {
+                  audio.playSwordSound(); setIsBossHit(true); setTimeout(() => setIsBossHit(false), 500);
+                  const newBossHP = Math.max(0, bossBattle.bossHP - dmg);
+                  setBossBattle(prev => ({ ...prev, bossHP: newBossHP, currentDamage: prev.currentDamage + 100 }));
+                  if (newBossHP <= 0) {
+                      setBossBattle(prev => ({...prev, phase: 'exploding'})); audio.stopMusic(); audio.playExplosion();
+                      setTimeout(() => { setBossBattle(prev => ({...prev, phase: 'black_out_win'})); }, 2500);
+                      setTimeout(() => { setBossBattle(prev => ({...prev, phase: 'win'})); audio.playEpicVictoryMusic(); }, 4500);
+                  } else {
+                      const nextQ = (bossBattle.qIndex + 1) % BOSS_QUESTIONS.length;
+                      setBossBattle(prev => ({...prev, qIndex: nextQ})); setRevealed(false);
+                      const qText = BOSS_QUESTIONS[nextQ].q; setTimeout(() => speakText(qText), 500);
+                  }
+              } else {
+                  audio.playPlayerHit(); const newPlayerHP = Math.max(0, bossBattle.playerHP - dmg);
+                  setBossBattle(prev => ({ ...prev, playerHP: newPlayerHP, currentDamage: prev.currentDamage + 100 }));
+                  if (newPlayerHP <= 0) {
+                      setBossBattle(prev => ({...prev, phase: 'lose'})); audio.stopMusic(); audio.playFailSound();
+                  } else {
+                      const nextQ = (bossBattle.qIndex + 1) % BOSS_QUESTIONS.length;
+                      setBossBattle(prev => ({...prev, qIndex: nextQ})); setRevealed(false);
+                      const qText = BOSS_QUESTIONS[nextQ].q; setTimeout(() => speakText(qText), 500);
+                  }
+              }
+          };
+
+          const handleSelectQuestion = (catIdx, qIdx) => {
+            const uniqueId = `${catIdx}-${qIdx}`; const lookupPos = `${catIdx}-${qIdx}`;
+            if (completed.includes(uniqueId)) return;
+            audio.playExplosion();
+            const categoryKey = activeCategories[catIdx].id;
+            const questionPool = activeQuestions[categoryKey][qIdx];
+            const randomQuestion = (questionPool && questionPool.length > 0) ? questionPool[Math.floor(Math.random() * questionPool.length)] : { q: "Daten fehlen!", a: "Bitte txt prüfen", points: 0 };
+            const basePoints = (qIdx + 1) * 100;
+            const qData = { ...randomQuestion, points: basePoints };
+            setCurrentQ({ catIdx, qIdx, data: qData, id: uniqueId }); setRevealed(false);
+
+            const isSafePeriod = completed.length < 5;
+            if (!isSafePeriod && activeSpecialEvents.lucky.includes(lookupPos)) {
+                setIsMeltdown(false); setGameState('LUCKY_INTRO'); audio.stopMusic(); audio.playJackpotSound();
+                setTimeout(() => { setGameState('LUCKY_ACTIVE'); if (round === 1) audio.playMusic(); else audio.playFunkMusic(); }, 2000); return;
+            }
+            if (!isSafePeriod && activeSpecialEvents.trap.includes(lookupPos)) {
+                setIsMeltdown(false); setGameState('TOTAL_MELTDOWN_INTRO'); audio.stopMusic(); audio.playFailSound();
+                setTimeout(() => { audio.playExplosion(); setGameState('TOTAL_MELTDOWN_ACTIVE'); if (round === 1) audio.playMusic(); else audio.playFunkMusic(); }, 2000); return;
+            }
+            if (!isSafePeriod && activeSpecialEvents.double.includes(lookupPos)) {
+                setIsMeltdown(false); setDoubleTroubleActive(true); setGameState('DOUBLE_TROUBLE_INTRO'); audio.stopMusic(); audio.playDoubleTroubleSound();
+                setTimeout(() => { if (round === 1) audio.playMusic(); else audio.playFunkMusic(); setGameState('QUESTION'); }, 2000); return;
+            }
+            if (!isSafePeriod && activeSpecialEvents.bonus.includes(lookupPos)) {
+              setIsMeltdown(true); setGameState('MELTDOWN_INTRO'); audio.stopMusic(); audio.startSirenLoop(); 
+              setTimeout(() => { audio.stopSirenLoop(); if (round === 1) audio.playMusic(); else audio.playFunkMusic(); setGameState('QUESTION'); }, 2000); 
+            } else { setIsMeltdown(false); setGameState('QUESTION'); }
+          };
+
+          useEffect(() => {
+            if (gameState === 'QUESTION' && currentQ) { setTimeout(() => { speakText(currentQ.data.q); }, 800); } 
+            else if (!['MELTDOWN_INTRO', 'TOTAL_MELTDOWN_INTRO', 'LUCKY_INTRO', 'DOUBLE_TROUBLE_INTRO', 'ROUND_INTRO'].includes(gameState)) {
+              window.speechSynthesis.cancel(); setSpeaking(false);
+            }
+          }, [gameState, currentQ]);
+
+          const getCurrentPoints = () => {
+              if (!currentQ) return 0; let val = currentQ.data.points;
+              if (round === 2) val *= 2; if (isMeltdown) val *= 3; if (doubleTroubleActive) val = Math.floor(val * 1.5);
+              return val;
+          };
+
+          const handleAnswer = (correct, team) => {
+            if (!currentQ) return;
+            const finalPoints = getCurrentPoints();
+            if (correct) { 
+                audio.playCorrect(); 
+                setScores(prev => ({ ...prev, [team]: prev[team] + finalPoints })); 
+                finishQuestion(); 
+            } else { 
+                audio.playWrong(); 
+                setScores(prev => ({ ...prev, [team]: Math.max(0, prev[team] - finalPoints) })); 
+                finishQuestion(); 
+            }
+          };
+
+          const applyPenalty = (team) => {
+              const penalty = Math.floor(1000 * (round === 2 ? 2 : 1) * (doubleTroubleActive ? 1.5 : 1));
+              audio.playExplosion(); 
+              setScores(prev => ({ ...prev, [team]: Math.max(0, prev[team] - penalty) })); 
+              finishQuestion();
+          };
+          const applyJackpot = (team) => {
+              const bonus = Math.floor(1000 * (round === 2 ? 2 : 1) * (doubleTroubleActive ? 1.5 : 1));
+              audio.playCorrect(); setScores(prev => ({ ...prev, [team]: prev[team] + bonus })); finishQuestion();
+          };
+
+          const finishQuestion = () => {
+            setCompleted(prev => [...prev, currentQ.id]); setIsMeltdown(false); setRevealed(false); 
+            if (completed.length + 1 >= 25) { 
+                if (round === 1) {
+                    setGameState('ROUND_1_SCORE_REVEAL'); audio.stopMusic(); audio.playJackpotSound();
+                    setTimeout(() => { setGameState('ROUND_OVER'); audio.playElevatorMusic(); }, 4000); 
+                } else {
+                    setTimeout(() => { setGameState('GAMEOVER'); audio.stopMusic(); audio.playEpicVictoryMusic(); }, 1000);
+                }
+            } else { setGameState('GRID'); }
+          };
+
+          const resetGame = () => {
+            setScores({ t1: 0, t2: 0 }); setCompleted([]); setDoubleTroubleActive(false); setRound(1); setBossBattle({ active: false });
+            setActiveSpecialEvents(generateRandomEvents()); setGameState('INTRO'); audio.stopMusic(); 
+          };
+
+          const leadingTeam = scores.t1 > scores.t2 ? 'TEAM CYAN' : (scores.t2 > scores.t1 ? 'TEAM FUCHSIA' : 'UNENTSCHIEDEN');
+          const loserColorText = winner === 't1' ? 'text-fuchsia-500' : 'text-cyan-400';
+
+          return (
+            <div className="relative w-full h-screen bg-slate-950 overflow-hidden font-mono text-white selection:bg-fuchsia-500 selection:text-white">
+              
+              <style>{`
+                .text-glow-cyan { text-shadow: 0 0 10px cyan, 0 0 20px cyan; }
+                .text-glow-fuchsia { text-shadow: 0 0 10px fuchsia, 0 0 20px fuchsia; }
+                .text-glow-lime { text-shadow: 0 0 10px #84cc16, 0 0 20px #84cc16; }
+                .text-glow-red { text-shadow: 0 0 5px red, 0 0 10px darkred; }
+                .text-glow-purple { text-shadow: 0 0 20px purple, 0 0 40px #a855f7; }
+                .text-glow-gold { text-shadow: 0 0 20px #fbbf24, 0 0 40px #f59e0b; }
+                .text-glow-split { text-shadow: -2px 0 cyan, 2px 0 magenta; }
+                
+                .box-glow-cyan { box-shadow: 0 0 15px cyan; }
+                .box-glow-fuchsia { box-shadow: 0 0 15px fuchsia; }
+                .box-glow-lime { box-shadow: 0 0 15px #84cc16; }
+                .perspective-container { perspective: 1000px; }
+                
+                /* CHANGED: No rotation, just a bouncy jump in */
+                @keyframes spin-crazy { 
+                    0% { transform: scale(0.1) translateY(500px); } 
+                    50% { transform: scale(1.5) translateY(-50px); } 
+                    70% { transform: scale(0.9) translateY(20px); } 
+                    80% { transform: scale(1.1) translateY(-10px); }
+                    100% { transform: scale(1) translateY(0); } 
+                }
+
+                @keyframes glitch-skew { 0% { transform: skew(0deg); } 20% { transform: skew(-20deg); } 40% { transform: skew(20deg); } 60% { transform: skew(-5deg); } 80% { transform: skew(5deg); } 100% { transform: skew(0deg); } }
+                @keyframes pulse-red { 0% { box-shadow: 0 0 0 0 rgba(255, 0, 0, 0.7); border-color: red; } 70% { box-shadow: 0 0 0 50px rgba(255, 0, 0, 0); border-color: orange; } 100% { box-shadow: 0 0 0 0 rgba(255, 0, 0, 0); border-color: red; } }
+                @keyframes rain-arrows { 0% { transform: translateY(-100vh) rotate(0deg); opacity: 0; } 50% { opacity: 1; } 100% { transform: translateY(100vh) rotate(360deg); opacity: 0; } }
+                @keyframes float-up { 0% { transform: translateY(100vh) scale(0.5); opacity: 0; } 20% { opacity: 1; } 100% { transform: translateY(-100vh) scale(1.5); opacity: 0; } }
+                @keyframes split-shake { 0% { transform: translate(0,0); } 25% { transform: translate(-5px, 5px); } 50% { transform: translate(5px, -5px); } 75% { transform: translate(-5px, -5px); } 100% { transform: translate(0,0); } }
+                @keyframes win-bounce { 0%, 100% { transform: translateY(0) rotate(0); } 50% { transform: translateY(-20px) rotate(5deg); } }
+                @keyframes sad-shake { 0% { transform: translate(0,0) rotate(0); } 25% { transform: translate(-2px, 2px) rotate(-2deg); } 50% { transform: translate(2px, -2px) rotate(2deg); } 75% { transform: translate(-2px, -2px) rotate(-2deg); } 100% { transform: translate(0,0) rotate(0); } }
+                @keyframes grow-mutation { 0% { transform: scale(1); filter: hue-rotate(0deg); } 100% { transform: scale(8); filter: hue-rotate(90deg) brightness(1.5) drop-shadow(0 0 10px lime); } }
+                
+                @keyframes boss-hit { 0% { transform: scale(1) rotate(0deg); filter: brightness(1); } 20% { transform: scale(1.2) rotate(-20deg); filter: brightness(5) sepia(1) saturate(10) hue-rotate(-50deg); } 40% { transform: scale(0.9) rotate(20deg); } 60% { transform: scale(1.1) rotate(-10deg); } 80% { transform: scale(0.95) rotate(10deg); } 100% { transform: scale(1) rotate(0deg); filter: brightness(1); } }
+                
+                @keyframes boss-explode { 
+                    0% { transform: scale(1); opacity: 1; filter: brightness(1); } 
+                    50% { transform: scale(2) rotate(45deg); opacity: 0.8; filter: brightness(10) sepia(1) saturate(10) hue-rotate(-50deg); } 
+                    100% { transform: scale(4) rotate(90deg); opacity: 0; } 
+                }
+                
+                @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+                @keyframes fadeOut { from { opacity: 1; } to { opacity: 0; } }
+                @keyframes warning-flash { 0% { opacity: 0; transform: scale(0.5) rotate(0deg); } 50% { opacity: 0.8; transform: scale(1.2) rotate(10deg); color: #ef4444; text-shadow: 0 0 10px red; } 100% { opacity: 0; transform: scale(0.5) rotate(0deg); } }
+                @keyframes pop-in { 0% { transform: scale(0); opacity: 0; } 80% { transform: scale(1.1); opacity: 1; } 100% { transform: scale(1); opacity: 1; } }
+                
+                @keyframes fly-sequence { 
+                    0% { transform: translateX(100vw) skewX(-20deg); opacity: 0; } 
+                    15% { transform: translateX(0) skewX(0deg); opacity: 1; } 
+                    85% { transform: translateX(0) skewX(0deg); opacity: 1; } 
+                    100% { transform: translateX(-100vw) skewX(20deg); opacity: 0; } 
+                }
+                @keyframes fly-out-sequence { 
+                    0% { transform: translateX(0) skewX(0deg); opacity: 1; } 
+                    70% { transform: translateX(0) skewX(0deg); opacity: 1; } 
+                    100% { transform: translateX(-100vw) skewX(20deg); opacity: 0; } 
+                }
+                @keyframes pop-boom { 
+                    0% { transform: scale(0); } 
+                    50% { transform: scale(1.5); } 
+                    70% { transform: scale(0.9); } 
+                    100% { transform: scale(1); } 
+                }
+
+                @keyframes beat {
+                    0%, 100% { transform: scale(1); }
+                    15% { transform: scale(1.15); }
+                    30% { transform: scale(1); }
+                    45% { transform: scale(1.15); }
+                    60% { transform: scale(1); }
+                }
+
+                /* 1. Vertical Rotation + Pulse for Meltdown */
+                @keyframes rotate-y-pulse {
+                    0% { transform: rotateY(0deg) scale(1); }
+                    50% { transform: rotateY(180deg) scale(1.1); }
+                    100% { transform: rotateY(360deg) scale(1); }
+                }
+                .animate-rotate-y { animation: rotate-y-pulse 3s infinite linear; }
+
+                /* 2. Slow Spin for Jackpot */
+                @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+                .animate-spin-slow { animation: spin 4s linear infinite; }
+
+                /* 3. Shake for Double Trouble Text */
+                @keyframes shake-text {
+                    0%, 100% { transform: translateX(0); }
+                    10%, 30%, 50%, 70%, 90% { transform: translateX(-4px); }
+                    20%, 40%, 60%, 80% { transform: translateX(4px); }
+                }
+                .animate-shake-text { animation: shake-text 0.4s ease-in-out infinite; }
+                
+                /* 4. Boss Float & Move */
+                @keyframes boss-float {
+                    0% { transform: translateY(0px) scale(1); filter: drop-shadow(0 0 20px lime); }
+                    50% { transform: translateY(-20px) scale(1.1); filter: drop-shadow(0 0 40px lime); }
+                    100% { transform: translateY(0px) scale(1); filter: drop-shadow(0 0 20px lime); }
+                }
+
+                /* Missing Classes Added Here */
+                .animate-win { animation: win-bounce 2s infinite ease-in-out; }
+                .animate-sad { animation: sad-shake 2s infinite ease-in-out; }
+                .animate-boss-hit { animation: boss-hit 0.5s ease-out; }
+                .animate-boss-idle { animation: boss-float 4s ease-in-out infinite; } /* UPDATED */
+                .animate-spin-crazy { animation: spin-crazy 1s cubic-bezier(0.2, 0.8, 0.2, 1) forwards; } /* Faster and just once */
+                .animate-pulse-red { animation: pulse-red 2s infinite; }
+                .animate-beat { animation: beat 2s infinite ease-in-out; }
+                .animate-fade-in-slow { animation: fadeIn 3s ease-in-out forwards; } /* NEW */
+
+                .animate-boss-explode { animation: boss-explode 2s ease-out forwards; }
+                
+                .animate-fly-across { animation: fly-sequence 1.5s cubic-bezier(0.2, 0.8, 0.2, 1) forwards; }
+                .animate-fly-out { animation: fly-out-sequence 2.5s cubic-bezier(0.2, 0.8, 0.2, 1) forwards; }
+                .animate-pop-boom { animation: pop-boom 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; }
+                
+                .animate-mutation { 
+                    animation: grow-mutation 8s ease-in forwards; 
+                    transition: none !important; 
+                }
+                
+                /* Custom Pulse for Double Trouble if tailwind fails */
+                @keyframes pulse-custom { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+                .animate-pulse-custom { animation: pulse-custom 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+              `}</style>
+
+              {/* DEBUG BUTTON: COMMENTED OUT FOR RELEASE BUT KEPT FOR DEV */}
+              {/* <button onClick={debugFillRound} className="fixed top-2 left-48 z-[200] bg-red-900 text-red-200 p-2 rounded-full opacity-50 hover:opacity-100 border border-red-500 text-xs font-bold" title="DEBUG: Skip Round"><FastForward size={16} /></button> */}
+
+              {/* --- FILE UPLOAD SCREEN --- */}
+              {gameState === 'LOAD_FILE' && (
+                <div className="absolute inset-0 z-[100] flex flex-col items-center justify-center bg-slate-950 p-8 text-center animate-in fade-in duration-500">
+                    <Upload size={80} className="text-lime-500 mb-6 animate-bounce" />
+                    <h1 className="text-4xl md:text-6xl font-black text-white mb-8 uppercase italic transform -skew-x-12">
+                         <span className="text-lime-500">Meltdown</span>
+                    </h1>
+                    <p className="text-slate-400 mb-8 max-w-lg text-lg">
+                        Lade die Datei <strong>fragen.txt</strong> hoch, um die Meltdown-Engine zu starten.
+                    </p>
+                    <div className="bg-slate-900 p-8 rounded-xl border-4 border-lime-500 box-glow-lime hover:scale-105 transition-transform duration-300">
+                        <input type="file" accept=".txt" onChange={handleFileUpload} className="text-white font-bold" />
+                    </div>
+                    {fileError && <div className="mt-8 p-4 bg-red-950 border border-red-500 text-red-200 rounded flex items-center gap-2 animate-pulse"><AlertTriangle /> {fileError}</div>}
+                </div>
+              )}
+
+              {/* HEADER */}
+              {gameState !== 'BOSS_BATTLE' && gameState !== 'TRUE_FINALE_INTRO' && gameState !== 'LOAD_FILE' && gameState !== 'ROUND_INTRO' && (
+                <div className="absolute top-0 left-0 w-full h-16 bg-slate-900 border-b border-slate-700 flex items-center justify-between px-6 z-40 shadow-xl">
+                    <div className="flex items-center gap-4 text-cyan-400"><div className="flex flex-col"><span className="text-xs uppercase tracking-widest opacity-70">Team Cyan</span><span className="text-3xl font-black font-mono text-glow-cyan">{scores.t1}</span></div></div>
+                    <div className="flex flex-col items-center">
+                    <div className="flex items-center gap-2">
+                        <h1 className="text-2xl font-black uppercase tracking-widest text-white italic transform -skew-x-12"> <span className="text-lime-500">Meltdown</span></h1>
+                        <span className="text-xs bg-slate-800 px-2 py-1 rounded text-slate-400">RUNDE {round}</span>
+                        {doubleTroubleActive && <div className="flex items-center gap-1 bg-yellow-500 text-black px-2 py-1 rounded font-black text-xs animate-pulse"><Layers size={14} /><span>x1.5</span></div>}
+                    </div>
+                    <div className="flex gap-2 mt-1"><button onClick={toggleMusic} className="text-slate-500 hover:text-white transition-colors">{musicOn ? <Volume2 size={16} /> : <VolumeX size={16} />}</button></div>
+                    </div>
+                    <div className="flex items-center gap-4 text-fuchsia-500 text-right"><div className="flex flex-col"><span className="text-xs uppercase tracking-widest opacity-70">Team Fuchsia</span><span className="text-3xl font-black font-mono text-glow-fuchsia">{scores.t2}</span></div></div>
+                </div>
+              )}
+
+              {/* ROUND INTRO SEQUENCE */}
+              {gameState === 'ROUND_INTRO' && (
+                <div className="absolute inset-0 z-[100] bg-slate-950 flex items-center justify-center overflow-hidden">
+                    {/* Category Animation - Guarded against missing data */}
+                    {introData.phase === 'categories' && introData.catIndex < 5 && activeCategories[introData.catIndex] && (
+                        <div key={introData.catIndex} className="animate-fly-across absolute w-full text-center flex flex-col items-center">
+                             {/* ICON REMOVED - ONLY TEXT */}
+                             {/* TEXT UPDATE: Neon Grün (Lime) statt Weiß */}
+                             <h1 className="text-6xl md:text-8xl font-black text-lime-400 uppercase italic text-glow-lime">
+                                {activeCategories[introData.catIndex].name}
+                             </h1>
+                        </div>
+                    )}
+                    
+                    {/* Round Title Animation */}
+                    {introData.phase === 'round_title' && (
+                         <div className="animate-fly-out absolute w-full text-center flex flex-col items-center justify-center">
+                             <h1 className="text-9xl font-black italic transform -skew-x-12 text-transparent bg-clip-text bg-gradient-to-r from-lime-400 to-emerald-600 filter drop-shadow-[0_0_30px_lime] py-4">
+                                RUNDE {round}
+                             </h1>
+                         </div>
+                    )}
+                    
+                    {/* Black Overlay for Fade In/Out */}
+                    <div className={`absolute inset-0 bg-slate-950 pointer-events-none transition-opacity duration-1000 ${introData.phase === 'fade_in' || introData.phase === 'fade_out' ? 'opacity-100' : 'opacity-0'}`}></div>
+                </div>
+              )}
+
+              {/* INTRO SCREEN */}
+              {gameState === 'INTRO' && (
+                <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-slate-950">
+                   <Skull size={80} className="text-lime-500 mb-6 animate-bounce" />
+                   <h1 className="text-6xl md:text-8xl font-black text-transparent bg-clip-text bg-gradient-to-r from-lime-400 to-emerald-600 mb-8 italic text-center px-4"> MELTDOWN</h1>
+                   
+                   <div className="flex gap-4 items-center mb-4 bg-slate-900 px-4 py-2 rounded-full border border-lime-500/50">
+                       <FileText className="text-lime-500" size={20} /> <span className="text-lime-500 font-mono font-bold">FRAGEN & KATEGORIEN GELADEN</span>
+                   </div>
+
+                   {/* TTS SPEED SELECTOR */}
+                   <div className="flex items-center gap-2 mb-8 bg-slate-900 p-2 rounded-lg border border-slate-700">
+                        <Mic size={16} className="text-slate-400 ml-2" />
+                        <span className="text-slate-400 font-bold text-sm mr-2">VORLESE-TEMPO:</span>
+                        <button 
+                            onClick={() => setTtsSpeedMode('normal')}
+                            className={`px-3 py-1 rounded font-bold text-xs uppercase tracking-wider transition-all border ${ttsSpeedMode === 'normal' ? 'bg-cyan-600 border-cyan-400 text-white shadow-[0_0_10px_cyan]' : 'bg-transparent border-transparent text-slate-500 hover:text-white hover:bg-slate-800'}`}
+                        >
+                            Normal
+                        </button>
+                        <button 
+                            onClick={() => setTtsSpeedMode('slow')}
+                            className={`px-3 py-1 rounded font-bold text-xs uppercase tracking-wider transition-all border ${ttsSpeedMode === 'slow' ? 'bg-fuchsia-600 border-fuchsia-400 text-white shadow-[0_0_10px_fuchsia]' : 'bg-transparent border-transparent text-slate-500 hover:text-white hover:bg-slate-800'}`}
+                        >
+                            Langsam (90%)
+                        </button>
+                   </div>
+
+                   <button onClick={startGame} className="px-12 py-6 bg-lime-500 text-slate-950 border-4 border-lime-400 font-black text-2xl uppercase tracking-widest hover:bg-lime-400 hover:border-lime-300 hover:scale-110 hover:shadow-[0_0_30px_#84cc16] transition-all duration-200 shadow-[0_0_15px_#84cc16]">SPIEL STARTEN</button>
+                </div>
+              )}
+
+              {/* ROUND 1 SCORE REVEAL */}
+              {gameState === 'ROUND_1_SCORE_REVEAL' && (
+                 <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-slate-950 animate-in zoom-in duration-500">
+                    <h2 className="text-4xl text-slate-400 uppercase tracking-widest mb-8">Zwischenstand</h2>
+                    <div className="flex gap-16 items-center">
+                        <div className={`flex flex-col items-center ${scores.t1 > scores.t2 ? 'scale-125 transition-transform duration-1000' : 'opacity-50'}`}>
+                            <span className="text-6xl font-black text-cyan-400 text-glow-cyan">{scores.t1}</span><span className="text-xl font-bold text-cyan-600">CYAN</span>
+                            {scores.t1 > scores.t2 && <Trophy className="text-yellow-400 mt-4 animate-bounce" size={48} />}
+                        </div>
+                        <div className="h-32 w-1 bg-slate-700"></div>
+                        <div className={`flex flex-col items-center ${scores.t2 > scores.t1 ? 'scale-125 transition-transform duration-1000' : 'opacity-50'}`}>
+                            <span className="text-6xl font-black text-fuchsia-500 text-glow-fuchsia">{scores.t2}</span><span className="text-xl font-bold text-fuchsia-700">FUCHSIA</span>
+                            {scores.t2 > scores.t1 && <Trophy className="text-yellow-400 mt-4 animate-bounce" size={48} />}
+                        </div>
+                    </div>
+                    <div className="mt-12 text-2xl text-white font-bold animate-pulse">{leadingTeam === 'UNENTSCHIEDEN' ? 'Noch ist alles offen!' : `${leadingTeam} führt!`}</div>
+                 </div>
+              )}
+
+              {/* ROUND OVER */}
+              {gameState === 'ROUND_OVER' && (
+                <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-slate-950 animate-in fade-in duration-1000 gap-8">
+                   <h2 className="text-5xl font-black text-white">RUNDE 1 VORBEI!</h2>
+                   <button onClick={triggerRound2Warning} className="px-8 py-4 bg-white text-slate-950 font-black text-xl hover:scale-105 transition-transform shadow-[0_0_20px_white]">WEITER ZU RUNDE 2</button>
+                </div>
+              )}
+
+              {/* WARNING SCREEN */}
+              {gameState === 'ROUND_TRANSITION_WARNING' && (
+                 <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-red-950 overflow-hidden">
+                     <div className="absolute inset-0 pointer-events-none">
+                        {Array.from({length: 30}).map((_, i) => {
+                            const edge = i % 4; let style = { position: 'absolute', animation: `warning-flash ${0.5 + Math.random()}s infinite`, animationDelay: `${Math.random() * 2}s`, fontSize: `${20 + Math.random() * 40}px`, fontWeight: 'bold', color: '#7f1d1d' };
+                            if (edge === 0) { style.top = `${Math.random() * 10}%`; style.left = `${Math.random() * 100}%`; }
+                            if (edge === 1) { style.right = `${Math.random() * 10}%`; style.top = `${Math.random() * 100}%`; }
+                            if (edge === 2) { style.bottom = `${Math.random() * 10}%`; style.left = `${Math.random() * 100}%`; }
+                            if (edge === 3) { style.left = `${Math.random() * 10}%`; style.top = `${Math.random() * 100}%`; }
+                            return <div key={i} style={style}>!</div>
+                        })}
+                     </div>
+                     <AlertTriangle size={150} className="text-red-500 mb-8 animate-bounce relative z-10" />
+                     <h1 className="text-7xl md:text-9xl font-black text-center text-white drop-shadow-[0_10px_10px_rgba(0,0,0,0.8)] tracking-tighter relative z-10">WARNUNG</h1>
+                     <p className="text-4xl text-white font-bold bg-red-900/80 px-8 py-4 mt-8 rounded border-4 border-red-500 animate-bounce relative z-10">ES WIRD GEFÄHRLICHER!</p>
+                     <p className="text-2xl text-yellow-400 font-mono mt-4 animate-pulse relative z-10">&gt;&gt; ALLE PUNKTE VERDOPPELT &lt;&lt;</p>
+                 </div>
+              )}
+
+              {/* GAME OVER (FAKE WINNER) */}
+              {gameState === 'GAMEOVER' && (
+                <div className="absolute inset-0 z-[200] overflow-hidden bg-slate-950 flex flex-col items-center justify-center">
+                   <div className={`absolute inset-0 transition-all duration-1000 ${winner === 't1' ? 'bg-cyan-950/80' : (winner === 't2' ? 'bg-fuchsia-950/80' : '')}`}></div>
+                   
+                   {/* Background Stars Container - FIXED position to ensure full screen coverage */}
+                   <div className="fixed inset-0 pointer-events-none z-0">
+                       {Array.from({length: 40}).map((_,i) => (
+                           <Star key={i} className={`absolute ${winner === 't1' ? 'text-cyan-500/30' : 'text-fuchsia-500/30'} animate-spin-crazy`}
+                                 style={{
+                                     top: Math.random() * 100 + 'vh',
+                                     left: Math.random() * 100 + 'vw',
+                                     width: Math.random() * 40 + 10 + 'px',
+                                     height: Math.random() * 40 + 10 + 'px',
+                                     animationDelay: Math.random() * 2 + 's'
+                                 }}
+                           />
+                       ))}
+                   </div>
+
+                   {winner === 't1' && (
+                          <div className="relative flex flex-col items-center animate-win z-10 p-8">
+                              <Trophy size={100} className="text-cyan-400 mb-6 drop-shadow-[0_0_30px_cyan] animate-bounce" />
+                              <h1 className="text-6xl font-black text-white text-glow-cyan mb-2 text-center leading-tight animate-beat">CYAN<br/>SIEGT!</h1>
+                          </div>
+                      )}
+                      {winner === 't2' && (
+                          <div className="relative flex flex-col items-center animate-win z-10 p-8">
+                              <Trophy size={100} className="text-fuchsia-500 mb-6 drop-shadow-[0_0_30px_fuchsia] animate-bounce" />
+                              <h1 className="text-6xl font-black text-white text-glow-fuchsia mb-2 text-center leading-tight animate-beat">FUCHSIA<br/>SIEGT!</h1>
+                          </div>
+                      )}
+                      {winner === 'draw' && (
+                          <div className="relative flex flex-col items-center animate-pulse z-10 p-8">
+                              <div className="flex gap-4 mb-6">
+                                <Trophy size={80} className="text-cyan-400 opacity-50" />
+                                <Trophy size={80} className="text-fuchsia-500 opacity-50" />
+                              </div>
+                              <h1 className="text-6xl font-black text-white mb-4">UNENTSCHIEDEN!</h1>
+                          </div>
+                      )}
+                   
+                   {winner !== 'draw' && (
+                       <div className="absolute bottom-8 left-8 p-4 bg-slate-900/90 border-2 border-slate-700 rounded-lg animate-sad shadow-xl backdrop-blur-sm z-[210]">
+                           <div className="flex flex-col items-center gap-2">
+                               <Frown size={40} className={loserColorText} />
+                               <span className={`font-black uppercase tracking-widest text-xs ${loserColorText}`}>
+                                   {winner === 't1' ? 'Team Fuchsia' : 'Team Cyan'}
+                               </span>
+                           </div>
+                       </div>
+                   )}
+                   <button onClick={triggerTrueFinale} className="absolute bottom-8 right-8 px-8 py-4 bg-white text-slate-950 font-black text-xl hover:scale-110 transition-transform shadow-2xl z-[210] border-4 border-slate-950">NEUER MELTDOWN</button>
+                </div>
+              )}
+
+              {/* TRUE FINALE INTRO */}
+              {gameState === 'TRUE_FINALE_INTRO' && (
+                  <div className="absolute inset-0 z-[999] bg-black flex items-center justify-center overflow-hidden">
+                      <div 
+                        onAnimationEnd={onMutationEnd}
+                        className={`flex flex-col items-center gap-4 transition-all duration-1000 ${(bossPhase === 'mutate_and_fade' || bossPhase === 'black_out') ? 'animate-mutation' : 'scale-100'}`}
+                      >
+                          <div className="relative w-[100px] h-[100px] flex items-center justify-center">
+                              <Frown size={100} className={`absolute top-0 left-0 ${loserColorText} transition-opacity duration-[7000ms] ${(bossPhase === 'mutate_and_fade' || bossPhase === 'black_out') ? 'opacity-0' : 'opacity-100'}`} />
+                              <Biohazard size={100} className={`absolute top-0 left-0 text-lime-500 filter drop-shadow-[0_0_10px_lime] transition-opacity duration-[7000ms] ${(bossPhase === 'mutate_and_fade' || bossPhase === 'black_out') ? 'opacity-100' : 'opacity-0'}`} />
+                          </div>
+                          <span className={`text-slate-500 font-bold text-2xl transition-opacity duration-1000 ${['text_in', 'mutate_and_fade', 'black_out'].includes(bossPhase) ? 'opacity-100' : 'opacity-0'}`}>... wirklich?</span>
+                      </div>
+                      <div className={`absolute inset-0 bg-black z-[1000] pointer-events-none ${bossPhase === 'black_in' ? 'opacity-100 duration-0' : ''} ${bossPhase === 'reveal' ? 'opacity-0 duration-1000 ease-in' : ''} ${bossPhase === 'text_in' ? 'opacity-0' : ''} ${bossPhase === 'mutate_and_fade' ? 'opacity-100 duration-[8000ms] ease-in' : ''} transition-opacity`} />
+                  </div>
+              )}
+
+              {/* BOSS BATTLE */}
+              {gameState === 'BOSS_BATTLE' && (
+                  <div className="absolute inset-0 z-[2000] bg-black flex flex-col items-center justify-between p-8 font-mono overflow-hidden animate-fade-in-slow">
+                      {/* --- OVERLAY REMOVED FOR SAFETY --- */}
+                      
+                      <div className="absolute inset-0 opacity-20 pointer-events-none" style={{ backgroundImage: 'linear-gradient(lime 1px, transparent 1px)', backgroundSize: '100px 100px' }}></div>
+                      
+                      <div className="w-full max-w-4xl z-10 flex flex-col items-center mb-8">
+                          {bossBattle.phase === 'exploding' ? (
+                              <div className="animate-boss-explode mb-4"><Biohazard size={120} className="text-red-500 filter drop-shadow-[0_0_50px_red]" /></div>
+                          ) : ['black_out_win', 'win'].includes(bossBattle.phase) ? (
+                              <div className="h-[120px] mb-4"></div> 
+                          ) : (
+                              <div className={`mb-4 ${isBossHit ? 'animate-boss-hit' : 'animate-boss-idle'}`}><Biohazard size={120} className="text-lime-500 filter drop-shadow-[0_0_20px_lime]" /></div>
+                          )}
+                          <h2 className="text-4xl font-black text-lime-500 uppercase tracking-widest mb-2">MUTIERTES {winner === 't1' ? 'FUCHSIA' : 'CYAN'}-TEAM</h2>
+                          <div className="w-full h-8 bg-gray-800 rounded-full border-2 border-lime-700 overflow-hidden relative">
+                              <div className="h-full bg-lime-500 transition-all duration-500" style={{ width: `${Math.max(0, (bossBattle.bossHP / bossBattle.bossMaxHP) * 100)}%` }} />
+                              <span className="absolute inset-0 flex items-center justify-center font-bold text-white drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)]">{bossBattle.bossHP} / {bossBattle.bossMaxHP} HP</span>
+                          </div>
+                      </div>
+
+                      {bossBattle.phase === 'start_screen' && (
+                          <div className="z-10 bg-slate-900/90 border-4 border-lime-500 p-8 rounded-xl max-w-3xl w-full text-center shadow-[0_0_50px_lime] animate-in zoom-in">
+                              <h3 className="text-3xl font-bold text-white mb-8 uppercase tracking-widest leading-relaxed">{winner === 't1' ? 'TEAM FUCHSIA' : 'TEAM CYAN'} MUTIERTE ZUM ULTIMATIVEN GEGNER.<br/>BESIEGE DAS MONSTER!</h3>
+                              <button onClick={startBossAction} className="px-8 py-4 bg-lime-500 hover:bg-lime-400 text-slate-950 font-black text-2xl uppercase tracking-widest rounded shadow-[0_0_30px_lime] animate-pulse">LOS GEHT'S!</button>
+                          </div>
+                      )}
+
+                      {bossBattle.phase === 'fight' && (
+                          <div className="z-10 bg-slate-900/90 border-4 border-red-500 p-8 rounded-xl max-w-3xl w-full text-center shadow-[0_0_50px_red] animate-in zoom-in">
+                              <h3 className="text-2xl font-bold text-white mb-8">{BOSS_QUESTIONS[bossBattle.qIndex] ? BOSS_QUESTIONS[bossBattle.qIndex].q : "FEHLER: Keine Boss-Fragen gefunden!"}</h3>
+                              <div className="flex gap-4 justify-center"><button onClick={() => setRevealed(!revealed)} className="px-4 py-2 bg-slate-700 text-white rounded">{revealed ? (BOSS_QUESTIONS[bossBattle.qIndex] ? BOSS_QUESTIONS[bossBattle.qIndex].a : "---") : "Lösung zeigen"}</button></div>
+                              <div className="grid grid-cols-2 gap-4 mt-8">
+                                  <button onClick={() => handleBossAnswer(true)} className="flex items-center justify-center gap-2 p-4 bg-green-600 hover:bg-green-500 text-white font-bold rounded text-xl"><Sword /> ANGRIFF (-{bossBattle.currentDamage})</button>
+                                  <button onClick={() => handleBossAnswer(false)} className="flex items-center justify-center gap-2 p-4 bg-red-600 hover:bg-red-500 text-white font-bold rounded text-xl"><Shield /> TREFFER (-{bossBattle.currentDamage})</button>
+                              </div>
+                          </div>
+                      )}
+
+                      {bossBattle.phase === 'black_out_win' && <div className="absolute inset-0 z-[200] bg-black animate-fade-in duration-2000"></div>}
+
+                      {bossBattle.phase === 'win' && (
+                          <div className="z-20 absolute inset-0 flex flex-col items-center justify-center bg-black animate-in fade-in duration-1000">
+                              <Trophy size={150} className="text-yellow-400 animate-bounce mb-4" />
+                              <h1 className="text-8xl font-black text-yellow-400 text-glow-gold text-center">WAHRER SIEGER:<br/>TEAM {winner === 't1' ? 'CYAN' : 'FUCHSIA'}</h1>
+                              <button onClick={resetGame} className="mt-8 px-8 py-4 bg-white text-black font-bold text-xl">NEUES SPIEL</button>
+                          </div>
+                      )}
+                      {bossBattle.phase === 'lose' && (
+                          <div className="z-20 absolute inset-0 flex flex-col items-center justify-center bg-black">
+                              <Skull size={150} className="text-lime-500 animate-pulse mb-4" />
+                              <h1 className="text-8xl font-black text-lime-500 text-center">GAME OVER</h1>
+                              <button onClick={resetGame} className="mt-8 px-8 py-4 bg-lime-500 text-black font-bold text-xl">REVANCHE?</button>
+                          </div>
+                      )}
+
+                      <div className="w-full max-w-4xl z-10 flex flex-col items-center mt-8">
+                          <div className="flex items-center gap-4 mb-2"><Heart className="text-red-500 fill-red-500 animate-pulse" /><h2 className={`text-2xl font-black uppercase tracking-widest ${winner === 't1' ? 'text-cyan-400' : 'text-fuchsia-500'}`}>TEAM {winner === 't1' ? 'CYAN' : 'FUCHSIA'}</h2></div>
+                          <div className="w-full h-8 bg-gray-800 rounded-full border-2 border-white overflow-hidden relative">
+                              <div className={`h-full transition-all duration-500 ${winner === 't1' ? 'bg-cyan-500' : 'bg-fuchsia-500'}`} style={{ width: `${Math.max(0, (bossBattle.playerHP / bossBattle.playerMaxHP) * 100)}%` }} />
+                              <span className="absolute inset-0 flex items-center justify-center font-bold text-white drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)]">{bossBattle.playerHP} / {bossBattle.playerMaxHP} HP</span>
+                          </div>
+                      </div>
+                  </div>
+              )}
+
+              {/* GRID VIEW */}
+              {gameState !== 'TRUE_FINALE_INTRO' && gameState !== 'BOSS_BATTLE' && gameState !== 'LOAD_FILE' && gameState !== 'ROUND_INTRO' && (
+                <div className="w-[200vw] h-full flex transition-transform duration-700 ease-[cubic-bezier(0.25,1,0.5,1)] pt-16" style={{ transform: (gameState !== 'INTRO' && gameState !== 'GRID' && gameState !== 'GAMEOVER' && gameState !== 'ROUND_OVER' && gameState !== 'ROUND_1_SCORE_REVEAL' && gameState !== 'ROUND_TRANSITION_WARNING') ? 'translateX(-100vw)' : 'translateX(0)' }}>
+                  
+                  {/* GRID */}
+                  <div className={`w-[100vw] h-full p-4 md:p-8 flex flex-col items-center justify-center perspective-container ${gridFlyIn ? 'animate-fly-in-right' : ''}`}>
+                    <div className="grid grid-cols-5 gap-2 md:gap-4 w-full h-full max-w-7xl" style={{ transform: (gameState === 'GRID') ? 'rotateY(0deg) scale(1)' : 'rotateY(10deg) scale(0.9)', transition: 'transform 0.7s' }}>
+                      {activeCategories.map((cat, i) => (
+                        <div key={i} className="flex flex-col items-center justify-center p-2 bg-slate-900 border-b-4 border-lime-500/50 rounded-t-lg">
+                          {/* ICON REMOVED */}
+                          <div className="text-sm md:text-xl font-black text-center uppercase break-words leading-none text-lime-400 tracking-tighter">{cat.name}</div>
+                        </div>
+                      ))}
+                      {Array.from({ length: 5 }).map((_, rowIndex) => (
+                        activeCategories.map((cat, colIndex) => {
+                          const id = `${colIndex}-${rowIndex}`; const isDone = completed.includes(id); const points = (rowIndex + 1) * 100 * (round === 2 ? 2 : 1);
+                          return (
+                            <button key={id} disabled={isDone || gameState !== 'GRID'} onClick={() => handleSelectQuestion(colIndex, rowIndex)} className={`relative flex items-center justify-center text-2xl md:text-4xl font-black font-mono border-2 rounded-lg transition-all duration-200 ${isDone ? 'bg-slate-900 border-slate-800 text-slate-800 cursor-not-allowed scale-95' : 'bg-slate-800/50 border-lime-500/30 text-lime-400 hover:bg-lime-500 hover:text-slate-950 hover:box-glow-lime hover:scale-105 hover:z-10'}`}>
+                              {isDone ? <CheckCircle className="opacity-20" /> : points}
+                            </button>
+                          );
+                        })
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* QUESTION PANEL */}
+                  <div className="w-[100vw] h-full flex items-center justify-center p-8 bg-gradient-to-br from-slate-900 via-slate-950 to-black relative">
+                    <div className="absolute inset-0 opacity-10 pointer-events-none" style={{ backgroundImage: 'linear-gradient(cyan 1px, transparent 1px), linear-gradient(90deg, cyan 1px, transparent 1px)', backgroundSize: '40px 40px' }}></div>
+                    {gameState === 'DOUBLE_TROUBLE_INTRO' && (
+                      <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/80 animate-split">
+                          <Layers size={120} className="text-white mb-8 animate-shake-text" /><h1 className="text-6xl md:text-9xl font-black text-center text-white text-glow-split animate-shake-text">DOUBLE<br/>TROUBLE</h1>
+                      </div>
+                    )}
+                    {gameState === 'TOTAL_MELTDOWN_INTRO' && (
+                      <div className="absolute inset-0 z-50 overflow-hidden flex items-center justify-center">
+                          <div className="relative z-10 flex flex-col items-center animate-spin-crazy"><Bomb size={120} className="text-purple-500 mb-8 animate-bounce" /><h1 className="text-6xl md:text-9xl font-black text-center text-purple-600 text-glow-purple">TOTAL<br/>MELTDOWN</h1></div>
+                      </div>
+                    )}
+                    {gameState === 'TOTAL_MELTDOWN_ACTIVE' && (
+                      <div className="relative z-10 w-full max-w-4xl bg-purple-950/90 border-4 border-purple-600 p-12 rounded-xl backdrop-blur-md shadow-[0_0_80px_rgba(168,85,247,0.5)] flex flex-col items-center text-center animate-in zoom-in duration-300">
+                          <Skull size={80} className="text-purple-400 mb-6 animate-bounce" /><h2 className="text-4xl md:text-6xl font-black text-white mb-4">PECH GEHABT!</h2>
+                          <div className="grid grid-cols-2 gap-8 w-full mt-8">
+                              <button onClick={() => applyPenalty('t1')} className="py-6 bg-cyan-950 border-2 border-cyan-500 text-cyan-400 font-bold text-xl rounded-lg hover:scale-105 transition-transform">TEAM CYAN -{Math.floor(1000 * (round === 2 ? 2 : 1) * (doubleTroubleActive ? 1.5 : 1))}</button>
+                              <button onClick={() => applyPenalty('t2')} className="py-6 bg-fuchsia-950 border-2 border-fuchsia-500 text-fuchsia-400 font-bold text-xl rounded-lg hover:scale-105 transition-transform">TEAM FUCHSIA -{Math.floor(1000 * (round === 2 ? 2 : 1) * (doubleTroubleActive ? 1.5 : 1))}</button>
+                          </div>
+                      </div>
+                    )}
+                    {gameState === 'LUCKY_INTRO' && (
+                      <div className="absolute inset-0 z-50 overflow-hidden flex items-center justify-center">
+                          <div className="relative z-10 flex flex-col items-center animate-spin-crazy"><Trophy size={120} className="text-yellow-400 mb-8 animate-bounce" /><h1 className="text-6xl md:text-9xl font-black text-center text-yellow-400 text-glow-gold">NEON<br/>JACKPOT</h1></div>
+                      </div>
+                    )}
+                    {gameState === 'LUCKY_ACTIVE' && (
+                      <div className="relative z-10 w-full max-w-4xl bg-yellow-950/90 border-4 border-yellow-500 p-12 rounded-xl backdrop-blur-md shadow-[0_0_80px_rgba(234,179,8,0.5)] flex flex-col items-center text-center animate-in zoom-in duration-300">
+                          <Star size={80} className="text-yellow-400 mb-6 animate-spin-slow" /><h2 className="text-4xl md:text-6xl font-black text-white mb-4">GLÜCKSKEKS!</h2>
+                          <div className="grid grid-cols-2 gap-8 w-full mt-8">
+                              <button onClick={() => applyJackpot('t1')} className="py-6 bg-cyan-950 border-2 border-cyan-500 text-cyan-400 font-bold text-xl rounded-lg hover:scale-105 transition-transform">TEAM CYAN +{Math.floor(1000 * (round === 2 ? 2 : 1) * (doubleTroubleActive ? 1.5 : 1))}</button>
+                              <button onClick={() => applyJackpot('t2')} className="py-6 bg-fuchsia-950 border-2 border-fuchsia-500 text-fuchsia-400 font-bold text-xl rounded-lg hover:scale-105 transition-transform">TEAM FUCHSIA +{Math.floor(1000 * (round === 2 ? 2 : 1) * (doubleTroubleActive ? 1.5 : 1))}</button>
+                          </div>
+                      </div>
+                    )}
+                    {gameState === 'MELTDOWN_INTRO' && (
+                      <div className="absolute inset-0 z-50 flex flex-col items-center justify-center">
+                          <div className="mb-8 animate-pulse">
+                              <AlertTriangle size={120} className="text-red-500 animate-rotate-y" />
+                          </div>
+                          <h1 className="text-6xl md:text-9xl font-black text-center text-red-600 text-glow-red animate-pulse">MAXIMAL<br/>MELTDOWN</h1>
+                      </div>
+                    )}
+                    {gameState === 'QUESTION' && currentQ && (
+                      <div className="relative z-10 w-full max-w-5xl flex flex-col gap-8 animate-fly-in-right">
+                          <div className={`p-8 md:p-12 rounded-xl backdrop-blur-md transition-all ${isMeltdown ? 'bg-red-950/90 border-4 border-red-600 animate-pulse-red' : 'bg-slate-900/90 border-4 border-lime-500'}`}>
+                            <div className="flex justify-between items-center mb-6 border-b pb-4 border-white/20">
+                              <span className={`font-bold tracking-widest uppercase text-xl ${isMeltdown ? 'text-red-400' : 'text-lime-400'}`}>{activeCategories[currentQ.catIdx].name}</span>
+                              <span className={`font-black font-mono text-2xl ${isMeltdown ? 'text-red-400' : 'text-lime-400'}`}>{getCurrentPoints()} PUNKTE</span>
+                            </div>
+                            <h2 className="text-2xl md:text-4xl font-bold leading-tight mb-8 text-white">{currentQ.data.q}</h2>
+                            <div className="min-h-[100px] flex items-center justify-center bg-black/60 rounded-lg border mb-8 p-4 border-white/20">
+                              {revealed ? <span className={`text-4xl font-mono font-bold animate-bounce ${isMeltdown ? 'text-red-500' : 'text-lime-400'}`}>{currentQ.data.a}</span> : <button onClick={() => setRevealed(true)} className="px-6 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded uppercase tracking-widest text-sm transition-colors border border-slate-600">Lösung enthüllen</button>}
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                              <div className="flex flex-col gap-2 p-4 border border-cyan-500/30 rounded bg-cyan-950/20">
+                                  <div className="text-cyan-400 font-bold text-center mb-2 uppercase">Team Cyan</div>
+                                  <div className="flex gap-2 h-16"><button onClick={() => handleAnswer(true, 't1')} className="flex-1 bg-green-600 hover:bg-green-500 text-white rounded font-bold flex items-center justify-center gap-2"><CheckCircle /> +{getCurrentPoints()}</button><button onClick={() => handleAnswer(false, 't1')} className="flex-1 bg-red-600 hover:bg-red-500 text-white rounded font-bold flex items-center justify-center gap-2"><XCircle /> -{getCurrentPoints()}</button></div>
+                              </div>
+                              <div className="flex flex-col gap-2 p-4 border border-fuchsia-500/30 rounded bg-fuchsia-950/20">
+                                  <div className="text-fuchsia-400 font-bold text-center mb-2 uppercase">Team Fuchsia</div>
+                                  <div className="flex gap-2 h-16"><button onClick={() => handleAnswer(true, 't2')} className="flex-1 bg-green-600 hover:bg-green-500 text-white rounded font-bold flex items-center justify-center gap-2"><CheckCircle /> +{getCurrentPoints()}</button><button onClick={() => handleAnswer(false, 't2')} className="flex-1 bg-red-600 hover:bg-red-500 text-white rounded font-bold flex items-center justify-center gap-2"><XCircle /> -{getCurrentPoints()}</button></div>
+                              </div>
+                            </div>
+                            <button onClick={() => setGameState('GRID')} className="absolute -top-16 right-0 text-slate-500 hover:text-white flex items-center gap-2"><ArrowLeft size={16} /> Abbrechen</button>
+                          </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<Meltdown />);
+    </script>
+</body>
+</html>
